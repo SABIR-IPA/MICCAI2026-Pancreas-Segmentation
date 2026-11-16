@@ -265,64 +265,127 @@ class StablePrecisionLoss(nn.Module):
 # ============================================================
 # Checkpoint loading utilities
 # ============================================================
-def load_checkpoint_clean_multiwindow(model, ckpt_path, device, in_ch=2):
+def _checkpoint_state_dict(ckpt_path, device):
+    """Read a trusted checkpoint and extract its model state."""
     raw = torch.load(ckpt_path, map_location=device, weights_only=False)
-    if isinstance(raw, dict) and not any(k.startswith(("swinViT", "encoder")) for k in raw.keys()):
-        for k in ("state_dict", "model_state_dict", "net", "model"):
-            if k in raw and isinstance(raw[k], dict):
-                raw = raw[k]
-                break
-    raw = {k.replace("module.", ""): v for k, v in raw.items()}
 
+    if not isinstance(raw, dict):
+        raise TypeError("Checkpoint must contain a state dictionary.")
+
+    for key in ("state_dict", "model_state_dict", "net", "model"):
+        if key in raw and isinstance(raw[key], dict):
+            raw = raw[key]
+            break
+
+    state = {}
+
+    for key, value in raw.items():
+        if not isinstance(value, torch.Tensor):
+            continue
+
+        normalized_key = key.removeprefix("module.")
+
+        if normalized_key in state:
+            raise ValueError(
+                f"Duplicate checkpoint parameter after prefix removal: "
+                f"{normalized_key}"
+            )
+
+        state[normalized_key] = value
+
+    if not state:
+        raise ValueError("Checkpoint contains no model tensors.")
+
+    return state
+
+
+def load_checkpoint_clean_multiwindow(model, ckpt_path, device, in_ch=2):
+    """Initialize the enhanced model from a compatible baseline checkpoint."""
+    raw = _checkpoint_state_dict(ckpt_path, device)
     target = model.state_dict()
     prefix = "base." if hasattr(model, "base") else ""
 
-    new_state, adapted, in_ch_adapted = {}, [], []
-    for k, v in raw.items():
-        for tk in (k, f"{prefix}{k}"):
-            if tk not in target:
+    new_state = {}
+    adapted = []
+    in_ch_adapted = []
+
+    for key, value in raw.items():
+        for target_key in (key, f"{prefix}{key}"):
+            if target_key not in target:
                 continue
-            if target[tk].shape == v.shape:
-                new_state[tk] = v
-                adapted.append(tk)
-                break
-            if (v.ndim == 5 and target[tk].ndim == 5 and
-                v.shape[0] == target[tk].shape[0] and v.shape[2:] == target[tk].shape[2:] and
-                v.shape[1] == 1 and target[tk].shape[1] == in_ch):
-                new_state[tk] = v.repeat(1, in_ch, 1, 1, 1) / in_ch
-                in_ch_adapted.append(tk)
+
+            expected = target[target_key]
+
+            if expected.shape == value.shape:
+                new_state[target_key] = value
+                adapted.append(target_key)
                 break
 
-    msg = model.load_state_dict(new_state, strict=False)
+            if (
+                value.ndim == 5
+                and expected.ndim == 5
+                and value.shape[0] == expected.shape[0]
+                and value.shape[2:] == expected.shape[2:]
+                and value.shape[1] == 1
+                and expected.shape[1] == in_ch
+            ):
+                new_state[target_key] = (
+                    value.repeat(1, in_ch, 1, 1, 1) / in_ch
+                )
+                in_ch_adapted.append(target_key)
+                break
 
-    # Load baseline head into base_out explicitly
-    base_w = raw.get("out.conv.conv.weight", None)
-    base_b = raw.get("out.conv.conv.bias", None)
+    expected_backbone = {
+        key for key in target if key.startswith(prefix)
+    } if prefix else set(target)
+
+    missing_backbone = expected_backbone - set(new_state)
+
+    if missing_backbone:
+        sample = sorted(missing_backbone)[:10]
+        raise ValueError(
+            f"Baseline checkpoint is missing {len(missing_backbone)} "
+            f"backbone tensors: {sample}"
+        )
+
+    head_weight = raw.get("out.conv.conv.weight")
+    head_bias = raw.get("out.conv.conv.bias")
+
+    if head_weight is None or head_bias is None:
+        raise ValueError("Baseline checkpoint is missing segmentation head tensors.")
+
+    target_weight = model.base_out.conv.conv.weight
+    target_bias = model.base_out.conv.conv.bias
+
+    if (
+        head_weight.shape != target_weight.shape
+        or target_bias is None
+        or head_bias.shape != target_bias.shape
+    ):
+        raise ValueError("Baseline segmentation head has incompatible shapes.")
+
+    model.load_state_dict(new_state, strict=False)
+
     with torch.no_grad():
-        if base_w is not None:
-            model.base_out.conv.conv.weight.copy_(base_w)
-        if base_b is not None and model.base_out.conv.conv.bias is not None:
-            model.base_out.conv.conv.bias.copy_(base_b)
+        target_weight.copy_(head_weight)
+        target_bias.copy_(head_bias)
         model.cn_gate.fill_(-3.0)
         model.tex_gate.fill_(-3.0)
         model.delta_gate.fill_(-3.0)
 
-    print(f"\nLoaded: {ckpt_path}")
-    print(f"  matched: {len(adapted)}, in-channel adapted: {len(in_ch_adapted)}, "
-          f"missing: {len(msg.missing_keys)}, unexpected: {len(msg.unexpected_keys)}")
+    print(f"Loaded baseline: {ckpt_path}")
+    print(
+        f"  matched: {len(adapted)}, "
+        f"in-channel adapted: {len(in_ch_adapted)}"
+    )
     return model
 
 
 def load_state_strictish(model, ckpt_path, device):
-    raw = torch.load(ckpt_path, map_location=device, weights_only=False)
-    if isinstance(raw, dict) and not any(k.startswith(("swinViT", "encoder")) for k in raw.keys()):
-        for k in ("state_dict", "model_state_dict", "net", "model"):
-            if k in raw and isinstance(raw[k], dict):
-                raw = raw[k]
-                break
-    raw = {k.replace("module.", ""): v for k, v in raw.items()}
-    msg = model.load_state_dict(raw, strict=False)
-    print(f"Loaded ckpt: {ckpt_path} | missing={len(msg.missing_keys)} unexpected={len(msg.unexpected_keys)}")
+    """Restore a complete enhanced-model checkpoint."""
+    raw = _checkpoint_state_dict(ckpt_path, device)
+    model.load_state_dict(raw, strict=True)
+    print(f"Loaded enhanced-model checkpoint: {ckpt_path}")
     return model
 
 

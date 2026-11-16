@@ -10,7 +10,7 @@ import numpy as np
 from monai.utils import set_determinism
 
 from preprocessing import (
-    build_case_index, load_splits, files_from_case_list,
+    build_case_index, load_splits, validate_splits, files_from_case_list,
     oversample_train, make_loader, SEED,
     MAX_EPOCHS_PHASE1, PATIENCE_PHASE1,
     MAX_EPOCHS_PHASE2, PATIENCE_PHASE2,
@@ -60,6 +60,7 @@ def main():
 
     # Build case index and prepare file lists
     case_index = build_case_index(args.data_dir)
+    validate_splits(splits, case_index)
     train_clean = files_from_case_list(case_index, splits["train_clean"])
     val_clean = files_from_case_list(case_index, splits["val_clean"])
     test_clean = files_from_case_list(case_index, splits["test_clean"])
@@ -148,7 +149,7 @@ def main():
     assert os.path.exists(phase2_best)
 
     # -------------------------
-    # FINAL: tune PP on VAL only, report TEST + HARD
+    # Final evaluation: tune postprocessing on validation; report independent test and training-exposed hard cases
     # -------------------------
     print("\n" + "=" * 80)
     print("TUNING postprocess ONLY on VAL_CLEAN (gated PP)")

@@ -92,3 +92,40 @@ when verified.
 ## Contact
 
 Email: sabir.ipa@gmail.com
+
+## Reproducibility and Evaluation Protocol
+
+### Dataset and splits
+
+The implementation expects paired NIfTI CT images and segmentation masks in the `imagesTr/` and `labelsTr/` directories. Image and label filenames must share the same case identifier. macOS AppleDouble metadata files beginning with `._` are excluded.
+
+The predefined MSD Task07 split contains:
+
+| Group | Cases |
+|---|---:|
+| Training (`train_clean`) | 195 |
+| Validation (`val_clean`) | 22 |
+| Independent test (`test_clean`) | 55 |
+| Hard cases (`hard_cases`) | 9 |
+
+All 281 cases have matching image-label filenames. The split groups contain no duplicate identifiers or overlaps.
+
+The training script requires a JSON split manifest containing the four keys listed above.
+
+### Pretrained checkpoint
+
+Training requires a compatible pretrained SwinUNETR checkpoint supplied through `--baseline_ckpt`. The checkpoint is not included in this repository.
+
+The checkpoint loader validates backbone parameter coverage and segmentation-head compatibility. Exact reproduction requires the original pretrained checkpoint.
+
+### Evaluation protocol and limitations
+
+**Ground-truth-dependent cropping:** The released evaluation preprocessing uses the ground-truth segmentation mask to define the foreground crop. This protocol is therefore not equivalent to fully automated whole-volume inference.
+
+**Hard-case exposure:** The nine hard cases are incorporated into Phase 2 training. Results on these cases are training-exposed diagnostics and must not be interpreted as independent test performance.
+
+**Postprocessing selection:** Postprocessing parameters are selected using the validation group, separately from the independent test group.
+
+### Reproduction requirements
+
+Exact reproduction requires the MSD Task07 dataset, the predefined split manifest, the original baseline checkpoint, and a compatible software environment. These data and checkpoint artifacts are not included in this repository.

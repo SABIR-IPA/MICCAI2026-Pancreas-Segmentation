@@ -78,13 +78,40 @@ def analyze_label(label_path, tumor_label=2):
 
 
 def build_case_index(data_dir):
-    images = sorted(glob(os.path.join(data_dir, "imagesTr", "*.nii.gz")))
-    labels = sorted(glob(os.path.join(data_dir, "labelsTr", "*.nii.gz")))
-    assert len(images) == len(labels) > 0
+    """Match CT volumes and segmentation masks by case identifier."""
+    images = sorted(
+        path for path in glob(os.path.join(data_dir, "imagesTr", "*.nii.gz"))
+        if not os.path.basename(path).startswith("._")
+    )
+    labels = sorted(
+        path for path in glob(os.path.join(data_dir, "labelsTr", "*.nii.gz"))
+        if not os.path.basename(path).startswith("._")
+    )
+
+    def case_id(path):
+        return os.path.basename(path).removesuffix(".nii.gz")
+
+    image_map = {case_id(path): path for path in images}
+    label_map = {case_id(path): path for path in labels}
+
+    missing_images = sorted(set(label_map) - set(image_map))
+    missing_labels = sorted(set(image_map) - set(label_map))
+
+    if missing_images or missing_labels:
+        raise ValueError(
+            f"Dataset pairing error: missing images={missing_images[:10]}, "
+            f"missing labels={missing_labels[:10]}"
+        )
+
+    if not image_map:
+        raise ValueError(f"No NIfTI cases found in {data_dir}")
+
     idx = {}
-    for img, lbl in zip(images, labels):
-        case = os.path.basename(lbl).replace(".nii.gz", "")
+    for case in sorted(image_map):
+        img = image_map[case]
+        lbl = label_map[case]
         tvox, ovox, ratio, has_tum = analyze_label(lbl, TUMOR_LABEL)
+
         idx[case] = {
             "case": case,
             "vol": img,
@@ -94,6 +121,7 @@ def build_case_index(data_dir):
             "ratio": ratio,
             "has_tumor": has_tum,
         }
+
     return idx
 
 
@@ -112,6 +140,40 @@ def load_splits(splits_path):
     print(f"  hard_cases  : {len(splits['hard_cases'])}")
     print("=" * 80)
     return splits
+
+
+
+def validate_splits(splits, case_index):
+    """Validate case membership and prevent overlap between evaluation groups."""
+    required = ("train_clean", "val_clean", "test_clean", "hard_cases")
+
+    for key in required:
+        names = splits[key]
+
+        if not isinstance(names, list):
+            raise TypeError(f"{key} must be a list")
+
+        if not names:
+            raise ValueError(f"{key} must contain at least one case")
+
+        if len(names) != len(set(names)):
+            raise ValueError(f"Duplicate case identifiers in {key}")
+
+        missing = set(names) - set(case_index)
+        if missing:
+            raise ValueError(
+                f"{key} contains cases missing from the dataset: {sorted(missing)}"
+            )
+
+    for i, first in enumerate(required):
+        for second in required[i + 1:]:
+            overlap = set(splits[first]) & set(splits[second])
+            if overlap:
+                raise ValueError(
+                    f"Overlapping cases in {first} and {second}: {sorted(overlap)}"
+                )
+
+    print("Dataset split validation passed.")
 
 
 def files_from_case_list(case_index, names):
