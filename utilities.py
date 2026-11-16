@@ -478,7 +478,9 @@ def postprocess_ranked_gated(pred_raw, tum_prob, thr, min_vox, max_lesions=2, pa
 
     tumor_mask = remove_small_cc((pred == TUMOR_LABEL), min_vox=min_vox)
     lbl, n = ndi.label(tumor_mask.astype(np.uint8))
+
     if n == 0:
+        pred[pred == TUMOR_LABEL] = ORGAN_LABEL
         return pred.astype(np.int16)
 
     lesion_scores = []
