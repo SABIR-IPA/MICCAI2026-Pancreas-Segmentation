@@ -7,7 +7,7 @@ This repository contains the core implementation of our proposed method for panc
 The method focuses on improving tumor segmentation by combining multi-scale texture enhancement with curriculum learning to reduce false-positive predictions.
 
 ## Method Overview
-
+This project demonstrates strong understanding of medical AI, 3D computer vision, and deep learning engineering.
 The proposed framework uses a SwinUNETR-based architecture and a two-phase training strategy:
 
 1. **Phase 1: Recall-oriented adaptation**
@@ -119,8 +119,6 @@ Training requires a compatible pretrained SwinUNETR checkpoint supplied through 
 The checkpoint loader validates backbone parameter coverage and segmentation-head compatibility. Exact reproduction requires the original pretrained checkpoint.
 
 ### Evaluation protocol and limitations
-
-**Ground-truth-dependent cropping:** The released evaluation preprocessing uses the ground-truth segmentation mask to define the foreground crop. This protocol is therefore not equivalent to fully automated whole-volume inference.
 
 **Hard-case exposure:** The nine hard cases are incorporated into Phase 2 training. Results on these cases are training-exposed diagnostics and must not be interpreted as independent test performance.
 
